@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify, url_for
 from flask_migrate import Migrate
 from flask_swagger import swagger
 from flask_cors import CORS
+from sqlalchemy import or_
 from utils import APIException, generate_sitemap
 from admin import setup_admin
 from models import Favourites, FavouritesType, People, Planets, Species, db, Users

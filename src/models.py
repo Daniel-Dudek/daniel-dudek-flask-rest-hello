@@ -71,4 +71,4 @@ class People(db.Model):
     homeworld:int = db.Column(db.Integer, ForeignKey('planets.id'), nullable=False)
 
     def __repr__(self):
-        return f'<People(uid={self.id}, name={self.name}, homeworld={self.homeworld})>'
+        return f'<People(uid={self.id}, description={self.description}, name={self.name}, homeworld={self.homeworld})>'

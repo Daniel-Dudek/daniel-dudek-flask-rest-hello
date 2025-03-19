@@ -9,6 +9,9 @@ from flask_cors import CORS
 from utils import APIException, generate_sitemap
 from admin import setup_admin
 from models import Favourites, FavouritesType, People, Planets, Species, db, Users
+import bcrypt
+from flask_jwt_extended import create_access_token, get_csrf_token, jwt_required, JWTManager, set_access_cookies, unset_jwt_cookies, get_jwt_identity
+
 #from models import Person
 
 app = Flask(__name__)
@@ -21,9 +24,19 @@ else:
     app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:////tmp/test.db"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+#JWT
+app.config["JWT_SECRET_KEY"] = ("super-secret")
+app.config["JWT_TOKEN_LOCATION"] = ["cookies"]
+app.config["JWT_COOKIE_CSRF_PROTECT"] = True
+app.config["JWT_CSRF_IN_COOKIES"] = True
+app.config["JWT_COOKIE_SECURE"] = True 
+
+jwt = JWTManager(app)
+
 MIGRATE = Migrate(app, db)
 db.init_app(app)
-CORS(app)
+app.config['CORS_HEADERS'] = 'Content-Type'
+CORS(app, supports_credentials=True)
 setup_admin(app)
 
 # Handle/serialize errors like a JSON object
@@ -41,6 +54,71 @@ tables = {
     "planets": Planets,
     "people": People
 }
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json()
+    user_name = data.get("user_name")
+    email = data.get("email")
+    password = data.get("password")
+
+    required_fields = ["user_name", "email", "password"]
+
+    if not all(field in data for field in required_fields):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    existing_user = db.session.query(Users).filter(or_(Users.user_name == user_name, Users.email == email)).first()
+    if existing_user:
+        return jsonify({"error": "Username or Email already registered"}), 400
+
+    hashedPassword = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    new_user = Users(user_name=user_name, email=email, password=hashedPassword)
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({"message": "User registered successfully"}), 201
+
+
+@app.route("/login", methods=["POST"])
+def get_login():
+    data = request.get_json()
+
+    email = data["email"]
+    password = data["password"]
+
+    required_fields = ["email", "password"]
+    if not all(field in data for field in required_fields):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    user = Users.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 400
+
+    is_password_valid = bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8'))
+
+    if not is_password_valid:
+        return jsonify({"error": "Password not correct"}), 400
+    
+    access_token = create_access_token(identity=str(user.id))
+    csrf_token = get_csrf_token(access_token)
+    response = jsonify({
+        "msg": "login successful",
+        "user": user,
+        "csrf_token": csrf_token
+        })
+    set_access_cookies(response, access_token)
+    
+    return response
+
+
+@app.route("/logout", methods=["POST"])
+@jwt_required()
+def logout_with_cookies():
+    response = jsonify({"msg": "logout successful"})
+    unset_jwt_cookies(response)
+    return response
 
 @app.route('/users', methods=['GET'])
 def get_users():
@@ -118,7 +196,7 @@ def get_planets():
 
 @app.route('/planets/<int:planet_id>', methods=['GET'])
 def get_planet(planet_id):
-    planet = Species.query.get(planet_id)
+    planet = Planets.query.get(planet_id)
     return jsonify(planet) if planet else (jsonify({"error": "Planet not found"}), 400)
 
 @app.route('/people', methods=['GET'])
@@ -130,8 +208,8 @@ def get_characters():
 def get_character(people_id):
     result = (
         db.session.query(People, Planets)
-        .join(Planets, People.homeworld == Planets.uid)
-        .filter(People.uid == people_id)
+        .join(Planets, People.homeworld == Planets.id)
+        .filter(People.id == people_id)
         .first()
     )
     character, home_world = result
